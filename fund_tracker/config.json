@@ -1,0 +1,10 @@
+{
+  "bse_security_master_file": "C:/Users/sb021/OneDrive/Documents/Emkay Analytics Tool/fund_tracker/Inputs/BhavCopy_BSE_CM_0_0_0_20260710_F_0000.CSV",
+  "nav_files": [
+    "C:\\Users\\sb021\\OneDrive\\Documents\\Emkay Analytics Tool\\fund_tracker\\Inputs\\Daily_NAV_CBAIF.xlsx"
+  ],
+  "nse_security_master_file": "C:/Users/sb021/OneDrive/Documents/Emkay Analytics Tool/fund_tracker/Inputs/EQUITY_L.csv",
+  "weightage_files": [
+    "C:\\Users\\sb021\\OneDrive\\Documents\\Emkay Analytics Tool\\fund_tracker\\Inputs\\Weightage_CBAIF.xlsx"
+  ]
+}

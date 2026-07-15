@@ -1,0 +1,10 @@
+pandas
+numpy
+yfinance
+matplotlib
+openpyxl
+xlsxwriter
+streamlit
+# tkinter ships with the standard Python installer on Windows/macOS.
+# On Linux you may need to install it separately, e.g.: sudo apt install python3-tk
+# pyxirr  # uncomment once transaction-level cash flow data is available (see Version 2 notes)
