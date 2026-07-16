@@ -215,6 +215,38 @@ def reload_masters() -> None:
     _ensure_loaded(force=True)
 
 
+def validate_nse_master_file(path) -> list:
+    """
+    Validation for a candidate NSE Security Master file, used before it's
+    registered (e.g. by the dashboard's "Security Master files" uploader)
+    so a badly-formatted file is rejected with a clear message instead of
+    silently breaking every subsequent ISIN lookup. Does a real (not just
+    header) parse, since _build_nse_lookup() also needs to detect the
+    ISIN/Symbol columns. Returns a list of problems (empty list = file
+    looks fine).
+    """
+    try:
+        _build_nse_lookup(Path(path))
+    except ValueError as exc:
+        return [str(exc)]
+    except Exception as exc:  # noqa: BLE001 - any other read/parse failure
+        return [f"Could not read '{path}' as an NSE Security Master file: {exc}"]
+    return []
+
+
+def validate_bse_master_file(path) -> list:
+    """Same as validate_nse_master_file(), but for the BSE Security Master
+    (also accepts the daily Bhavcopy/trade-file shape - see module
+    docstring)."""
+    try:
+        _build_bse_lookup(Path(path))
+    except ValueError as exc:
+        return [str(exc)]
+    except Exception as exc:  # noqa: BLE001
+        return [f"Could not read '{path}' as a BSE Security Master file: {exc}"]
+    return []
+
+
 # =============================================================================
 # Public API
 # =============================================================================

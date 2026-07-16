@@ -11,6 +11,19 @@ files. Every module that needs one of these files should call the matching
 get_*() function below - nothing else in the application should build its
 own path to them.
 
+When run as the Streamlit dashboard (the primary, hosted way this tool is
+used), there's no display for that file-picker dialog to appear on. Files
+are instead uploaded through the browser (see dashboard.py's sidebar),
+written into INPUT_DIR below, and registered via add_fund_files() /
+set_nse_security_master() / set_bse_security_master() - the same
+config.json ends up holding the same kind of path either way. Whatever's
+registered stays configured - and the underlying file stays in INPUT_DIR -
+across dashboard sessions/reruns until it's explicitly replaced (Security
+Master) or removed (a fund's Weightage/NAV pair), for as long as the
+app's disk survives (see README "Persistence" section for the caveat on
+platforms with ephemeral storage, e.g. Streamlit Community Cloud across a
+redeploy).
+
 Weightage / Daily NAV are a *list* of files, not a single one - a firm adds
 another fund by supplying its own Weightage + Daily NAV Excel pair (same
 column headers as every other file) via config.add_fund_files(); every file
@@ -29,9 +42,13 @@ OUTPUT_DIR = BASE_DIR / "Outputs"
 CHARTS_DIR = OUTPUT_DIR / "Performance_Charts"
 CACHE_DIR = BASE_DIR / ".cache"
 
-# Not read from directly anymore - only used as the file-picker's initial
-# folder the first time a portfolio/master file is selected, and as the
-# default save location for fund files uploaded through the dashboard.
+# Not read from directly anymore - used as (a) the desktop file-picker's
+# initial folder the first time a portfolio/master file is selected, and
+# (b) the on-disk save location for every file uploaded through the
+# Streamlit dashboard (Weightage, Daily NAV, NSE/BSE Security Master). A
+# file written here stays here - and stays configured - until it's
+# explicitly replaced/removed, so this doubles as the app's persistent
+# storage for uploads across dashboard reruns/sessions.
 INPUT_DIR = BASE_DIR / "Inputs"
 
 SECTOR_CACHE_FILE = CACHE_DIR / "sector_cache.json"
@@ -166,6 +183,44 @@ def get_bse_security_master() -> Path:
 
 
 def update_security_masters() -> tuple:
-    """Explicit 'Update Security Master Files' action - force re-selection
-    of both the NSE and BSE Security Master files via the file picker."""
+    """Explicit 'Update Security Master Files' action (desktop/CLI only) -
+    force re-selection of both the NSE and BSE Security Master files via
+    the native file picker. Not used by the Streamlit dashboard, which
+    instead calls set_nse_security_master()/set_bse_security_master() with
+    an uploaded file - see file_manager.py's module docstring."""
     return _manager.update_security_masters()
+
+
+def set_nse_security_master(path) -> Path:
+    """Register an NSE Security Master file directly (no file picker) -
+    used by the dashboard's uploader and main.py's --nse-master flag."""
+    return _manager.set_path(file_manager.KEY_NSE_MASTER, path)
+
+
+def set_bse_security_master(path) -> Path:
+    """Register a BSE Security Master file directly (no file picker) -
+    used by the dashboard's uploader and main.py's --bse-master flag."""
+    return _manager.set_path(file_manager.KEY_BSE_MASTER, path)
+
+
+# ---------------------------------------------------------------------------
+# Non-prompting existence checks - safe to call anywhere, including a hosted
+# Streamlit app with no display. Callers should check these before calling
+# any get_*() above, and render an upload prompt instead of letting a
+# missing file fall through to the desktop file picker.
+# ---------------------------------------------------------------------------
+def has_weightage_files() -> bool:
+    return _manager.has_weightage_files()
+
+
+def has_nav_files() -> bool:
+    return _manager.has_nav_files()
+
+
+def has_nse_security_master() -> bool:
+    return _manager.has_nse_security_master()
+
+
+def has_bse_security_master() -> bool:
+    return _manager.has_bse_security_master()
+

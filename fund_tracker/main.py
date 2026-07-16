@@ -16,6 +16,14 @@ add another fund at any time with --add-fund (see below) instead of
 maintaining one giant Weightage/NAV file; every fund across every
 configured file is picked up automatically.
 
+This CLI is for local/desktop/scripted use (it opens a native file-picker
+dialog for any file that isn't yet configured, or reads the --flags below).
+For the hosted, browser-based version of this tool - where files are
+uploaded rather than picked from local disk - run `streamlit run
+dashboard.py` instead; see the README's "Running the dashboard" section.
+Both share the same config.json / Inputs/ folder, so a fund added via one
+is immediately visible to the other.
+
 Rebalancing
 ------------
 There's no manager-entered target weight. A holding is flagged when its

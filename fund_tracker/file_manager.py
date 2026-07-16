@@ -33,6 +33,23 @@ or the user explicitly asks to update it - see update_security_masters()).
 Any config.json written by an older version of this tool (single
 "weightage_file" / "nav_file" strings) is transparently migrated to the new
 list form the first time it's read - see _migrate_legacy_single_file_keys().
+
+Two ways files get configured
+------------------------------
+1. **Desktop/CLI** (`python main.py`): get_*() opens a native tkinter file
+   picker the first time a file is needed, and remembers the choice.
+2. **Hosted dashboard** (`streamlit run dashboard.py`, incl. Streamlit
+   Community Cloud): there's no display for a picker to appear on, so
+   dashboard.py never lets get_*() fall through to `_browse()`. Instead it
+   checks has_weightage_files() / has_nav_files() /
+   has_nse_security_master() / has_bse_security_master() first, and when a
+   file is missing it renders a `st.file_uploader`, writes the upload to
+   `config.INPUT_DIR` on disk, and calls add_fund_files() / set_path() to
+   register it - functionally the same "pick once, remember it" behaviour
+   as the desktop picker, just driven by a browser upload instead of a
+   native dialog. Either way the result lives in the *same* config.json /
+   Inputs/ folder, so a fund or Security Master file configured through one
+   entry point is immediately visible to the other.
 """
 
 import json
@@ -127,7 +144,28 @@ class ConfigManager:
         return bool(path_str) and Path(path_str).exists()
 
     # ------------------------------------------------------------------
-    # file picker
+    # non-prompting existence checks - safe to call anywhere (including a
+    # hosted/headless Streamlit app) since they never open a file picker.
+    # Callers (e.g. dashboard.py) should check these BEFORE calling the
+    # get_*() methods below, and render an upload prompt instead when a
+    # file isn't configured yet, rather than letting get_*() fall through
+    # to _browse() (which requires a local display and isn't available on
+    # a hosted server).
+    # ------------------------------------------------------------------
+    def has_weightage_files(self) -> bool:
+        return any(self._is_valid(p) for p in self._config.get(KEY_WEIGHTAGE_FILES, []))
+
+    def has_nav_files(self) -> bool:
+        return any(self._is_valid(p) for p in self._config.get(KEY_NAV_FILES, []))
+
+    def has_nse_security_master(self) -> bool:
+        return self._is_valid(self._config.get(KEY_NSE_MASTER))
+
+    def has_bse_security_master(self) -> bool:
+        return self._is_valid(self._config.get(KEY_BSE_MASTER))
+
+    # ------------------------------------------------------------------
+    # file picker (desktop/CLI use only - see docstring above)
     # ------------------------------------------------------------------
     def _browse(self, key: str, initial_dir: Path = None) -> str:
         try:
@@ -137,8 +175,11 @@ class ConfigManager:
             raise RuntimeError(
                 f"Cannot open a file picker for the {FRIENDLY_NAMES.get(key, key)} - "
                 f"tkinter is not available in this environment (on Linux you may need "
-                f"to install the 'python3-tk' package). As a workaround, either edit "
-                f"'{key}' directly in {self.config_path}, or pass the path on the "
+                f"to install the 'python3-tk' package). This is expected on a hosted "
+                f"server (e.g. Streamlit Community Cloud): use the dashboard's sidebar "
+                f"uploaders instead of running main.py there, since there's no display "
+                f"for a file-picker dialog to appear on. For CLI/headless use, either "
+                f"edit '{key}' directly in {self.config_path}, or pass the path on the "
                 f"command line (see main.py --help)."
             ) from exc
 

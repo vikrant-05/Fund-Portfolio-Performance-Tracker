@@ -1,15 +1,57 @@
 """
-dashboard.py (optional)
-------------------------
-A lightweight Streamlit front-end over the same pipeline used by main.py.
+dashboard.py
+------------
+The primary, hosted front-end over the same pipeline used by main.py. This
+is the intended way most users run this tool - typically deployed once
+(e.g. on Streamlit Community Cloud) and used by the whole firm from a
+browser, with no local Python install or CLI needed day to day.
+
+Everything - Weightage, Daily NAV, and the NSE/BSE Security Master files -
+is provided by uploading it through the sidebar; nothing is read off the
+server's local disk except what was itself uploaded earlier. See "First
+run" and "Persistence" below.
+
+First run
+----------
+On a brand-new deployment (empty config.json, empty Inputs/), the main
+page shows upload prompts instead of a fund dashboard: NSE + BSE Security
+Master (sidebar, "Security Master files") and at least one Weightage +
+Daily NAV pair (sidebar, "Add a fund"). Once all four are uploaded, the
+fund dashboard below renders normally. `python generate_sample_data.py`
+(run once, locally, before deploying) is the fastest way to get four demo
+files to upload if you just want to try the tool out.
+
+Persistence - a file stays configured until you change it
+------------------------------------------------------------
+Every upload is written to disk under Inputs/ and its path is saved to
+config.json (via file_manager.py), exactly like the desktop file-picker
+flow main.py uses. That means:
+  - A fund (its Weightage + Daily NAV pair) stays in the "Fund" dropdown,
+    and its files stay on disk, across every dashboard reload/rerun and
+    every visitor's session - until someone removes it via "Remove a
+    fund" below. Removing only un-registers it; the files aren't deleted.
+  - The NSE/BSE Security Master files load silently on every run, with no
+    re-prompt, until someone uploads a fresh copy via "Security Master
+    files" below (e.g. after downloading an updated one from nseindia.com
+    / bseindia.com) - which replaces the previously-registered one.
+  - This is process/disk-level state, not per-browser-session state: one
+    person uploading a fund makes it visible to every other visitor to
+    the same deployment.
+  - Caveat for platforms with *ephemeral* storage (e.g. a Streamlit
+    Community Cloud app whose container gets rebuilt on redeploy, or
+    after extended inactivity): Inputs/ and config.json can be reset by
+    the platform even though nothing in this app deletes them. If your
+    hosting platform doesn't offer a persistent volume, treat re-
+    uploading after a platform-triggered restart as expected, not a bug -
+    see the README's "Persistence & hosting" section for options.
 
 Adding a fund
 --------------
 A firm isn't limited to one Weightage/NAV file - the sidebar's "Add a fund"
-uploader lets the user pick another fund's Weightage + Daily NAV Excel files
-(same column headers as every other file) straight from the browser. They're
-saved into Inputs/ and registered via config.add_fund_files(), so the new
-fund's code shows up in the "Fund" dropdown below immediately after.
+uploader lets the user upload another fund's Weightage + Daily NAV Excel
+files (same column headers as every other file) straight from the browser.
+They're saved into Inputs/ and registered via config.add_fund_files(), so
+the new fund's code shows up in the "Fund" dropdown below immediately after.
 
 Removing a fund
 ----------------
@@ -27,13 +69,6 @@ slider instead flags any holding whose Current Weight has moved by more
 than that many percentage points versus its Previous month-end Weight -
 see rebalance.compute_weight_drift().
 
-File management note
-----------------------
-Streamlit runs as a local web app, but it's still a process on the user's
-own machine when launched with `streamlit run dashboard.py`, so the same
-file_manager.py / config.py used by main.py works here too - Security
-Master files load silently unless updated below.
-
 Run:
     streamlit run dashboard.py
 """
@@ -50,6 +85,7 @@ import data_loader
 import performance
 import rebalance
 import report_generator
+import security_master
 import yahoo_fetch
 
 st.set_page_config(page_title="Fund/Portfolio Performance Tracker", layout="wide")
@@ -105,28 +141,80 @@ def _growth_chart(daily: pd.DataFrame):
     return df
 
 # --- file management sidebar ------------------------------------------------
-with st.sidebar.expander("Configured files", expanded=False):
-    st.caption("Portfolio files are re-checked (not re-prompted) every run; "
-               "Security Master files load silently unless updated below.")
-    st.markdown("**Weightage file(s):**")
-    for p in config.get_weightage_files():
-        st.text(f"  {p}")
-    st.markdown("**Daily NAV file(s):**")
-    for p in config.get_nav_files():
-        st.text(f"  {p}")
-    st.text(f"NSE Master: {config.get_nse_security_master()}")
-    st.text(f"BSE Master: {config.get_bse_security_master()}")
+# Every getter below is guarded by a has_*() check first (never called
+# unconditionally), so an unconfigured file renders an upload prompt
+# instead of falling through to file_manager's desktop file-picker, which
+# has no display to appear on in a hosted environment - see file_manager.py.
+st.sidebar.header("Data files")
 
-if st.sidebar.button("Update Security Master Files"):
-    config.update_security_masters()
-    st.cache_data.clear()
-    st.sidebar.success("Security Master files updated.")
-    st.rerun()
+masters_configured = config.has_nse_security_master() and config.has_bse_security_master()
+
+with st.sidebar.expander("Security Master files", expanded=not masters_configured):
+    st.caption(
+        "Static reference files used to resolve each holding's ISIN to a "
+        "Yahoo Finance ticker (NSE checked first, then BSE - see "
+        "security_master.py). Downloaded from nseindia.com / bseindia.com. "
+        "Loaded silently on every run once set below; upload a fresh "
+        "download here any time to REPLACE the one currently in use - the "
+        "previous file stays on disk but is no longer read."
+    )
+    st.text("NSE Master: " + (config.get_nse_security_master().name
+                               if config.has_nse_security_master() else "not configured yet"))
+    st.text("BSE Master: " + (config.get_bse_security_master().name
+                               if config.has_bse_security_master() else "not configured yet"))
+
+    nse_upload = st.file_uploader("NSE Security Master (.csv/.xlsx)",
+                                   type=["csv", "xlsx", "xls"], key="nse_master_upload")
+    if st.button("Set NSE Security Master", disabled=nse_upload is None):
+        dest = config.INPUT_DIR / nse_upload.name
+        dest.write_bytes(nse_upload.getvalue())
+        problems = security_master.validate_nse_master_file(dest)
+        if problems:
+            st.error("Couldn't use this file:\n" + "\n".join(f"- {p}" for p in problems))
+        else:
+            config.set_nse_security_master(dest)
+            security_master.reload_masters()
+            st.cache_data.clear()
+            st.success(f"NSE Security Master set to {nse_upload.name}.")
+            st.rerun()
+
+    bse_upload = st.file_uploader("BSE Security Master (.csv/.xlsx)",
+                                   type=["csv", "xlsx", "xls"], key="bse_master_upload")
+    if st.button("Set BSE Security Master", disabled=bse_upload is None):
+        dest = config.INPUT_DIR / bse_upload.name
+        dest.write_bytes(bse_upload.getvalue())
+        problems = security_master.validate_bse_master_file(dest)
+        if problems:
+            st.error("Couldn't use this file:\n" + "\n".join(f"- {p}" for p in problems))
+        else:
+            config.set_bse_security_master(dest)
+            security_master.reload_masters()
+            st.cache_data.clear()
+            st.success(f"BSE Security Master set to {bse_upload.name}.")
+            st.rerun()
+
+st.sidebar.markdown("---")
+
+with st.sidebar.expander("Configured fund files", expanded=False):
+    st.caption("Re-checked (not re-prompted) every run - stays configured "
+               "until removed below, even across dashboard reloads.")
+    st.markdown("**Weightage file(s):**")
+    if config.has_weightage_files():
+        for p in config.get_weightage_files():
+            st.text(f"  {p.name}")
+    else:
+        st.caption("  none uploaded yet")
+    st.markdown("**Daily NAV file(s):**")
+    if config.has_nav_files():
+        for p in config.get_nav_files():
+            st.text(f"  {p.name}")
+    else:
+        st.caption("  none uploaded yet")
 
 st.sidebar.markdown("---")
 
 # --- add a fund --------------------------------------------------------------
-with st.sidebar.expander("Add a fund", expanded=False):
+with st.sidebar.expander("Add a fund", expanded=not (config.has_weightage_files() and config.has_nav_files())):
     st.caption(
         "Upload a new fund's Weightage and Daily NAV Excel files (same column "
         "headers as the existing ones). Once added, its fund code(s) appear "
@@ -173,10 +261,16 @@ with st.sidebar.expander("Remove a fund", expanded=False):
         "app from loading them, so any fund code that lived only inside "
         "them stops appearing below from the next load onward."
     )
-    weightage_paths = config.get_weightage_files()
-    nav_paths = config.get_nav_files()
+    if not (config.has_weightage_files() and config.has_nav_files()):
+        st.caption("No fund files uploaded yet - use 'Add a fund' above.")
+        weightage_paths, nav_paths = [], []
+    else:
+        weightage_paths = config.get_weightage_files()
+        nav_paths = config.get_nav_files()
 
-    if len(weightage_paths) <= 1 and len(nav_paths) <= 1:
+    if not weightage_paths and not nav_paths:
+        pass
+    elif len(weightage_paths) <= 1 and len(nav_paths) <= 1:
         st.caption("Only one fund file pair is configured - nothing to remove "
                    "(the app needs at least one Weightage and Daily NAV file).")
     elif len(weightage_paths) == len(nav_paths):
@@ -226,6 +320,23 @@ def _load_data():
 def _load_sectors(_mapping):
     return yahoo_fetch.fetch_sector_data(_mapping)
 
+
+# Nothing below this point may run until all four required files are
+# configured - data_loader.load_all() (via config.get_*()) would otherwise
+# fall through to file_manager's desktop file-picker, which has no display
+# to open on a hosted server. Check has_*() first and show upload guidance
+# instead, rather than letting that surface as a raw exception.
+if not (config.has_weightage_files() and config.has_nav_files()
+        and config.has_nse_security_master() and config.has_bse_security_master()):
+    st.info(
+        "**Get started:** upload both Security Master files and at least one "
+        "fund's Weightage + Daily NAV files using the sidebar sections above. "
+        "All four are required before the dashboard can load. See the "
+        "README for what each file needs to contain, or run "
+        "`python generate_sample_data.py` locally beforehand for ready-made "
+        "demo files you can upload here to try the tool out."
+    )
+    st.stop()
 
 try:
     fund_data = _load_data()
